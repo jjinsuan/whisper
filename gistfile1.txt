@@ -1,0 +1,89 @@
+from tqdm import tqdm
+import whisper
+import numpy as np
+from pathlib import Path
+import telegram
+import asyncio
+import os
+
+video_folder = os.path.join(*'E:/V_Sub/ebvr-082'.split('/'))
+model_type = 'medium'
+video_lang = 'ja'
+save_path = 'data'
+save_path = Path(save_path)
+save_path.mkdir(exist_ok=True, parents=True)
+format = 'srt'
+
+# TELEGRAM_TOKEN = ''
+# TELEGRAM_CHAT_ID = 
+
+bot = telegram.Bot(token=TELEGRAM_TOKEN)
+
+# async def send_telegram_message(chat_id, text):
+#     await bot.send_message(chat_id=chat_id, text=text)
+
+def transcribe(video, save_path, filename, model_type='medium', translate=False):
+    options = whisper.DecodingOptions(fp16=False, language=video_lang, task="translate" if translate else None)
+    model = whisper.load_model(model_type)
+    result = model.transcribe(video, **options.__dict__, verbose=False)
+    return result, video
+
+def segments_to_srt(segs):
+    text = []
+    for i, s in tqdm(enumerate(segs)):
+        text.append(str(i + 1))
+        time_start = s['start']
+        hours, minutes, seconds = int(time_start / 3600), (time_start / 60) % 60, (time_start) % 60
+        timestamp_start = "%02d:%02d:%06.3f" % (hours, minutes, seconds)
+        timestamp_start = timestamp_start.replace('.', ',')
+        time_end = s['end']
+        hours, minutes, seconds = int(time_end / 3600), (time_end / 60) % 60, (time_end) % 60
+        timestamp_end = "%02d:%02d:%06.3f" % (hours, minutes, seconds)
+        timestamp_end = timestamp_end.replace('.', ',')
+        text.append(timestamp_start + " --> " + timestamp_end)
+
+        text.append(s['text'].strip() + "\n")
+
+    return "\n".join(text)
+
+def convert_to_subtitle(segs):
+    if format == 'srt':
+        sub = segments_to_srt(segs)
+    elif format == 'txt':
+        sub = transcribed_text(segs)
+    else:
+        raise ValueError(f"format {format} is not supported!")
+    return sub
+
+def save_subtitle(sub, video_folder, filename, format='srt'):
+    srt_file = video_folder / f'{filename}.{format}'
+    with open(srt_file, 'w', encoding='utf-8') as f:
+        f.write(sub)
+    return srt_file
+
+def transcribed_text(segs):
+    texts = [s['text'] for s in segs]
+    text = '\n'.join(texts)
+    return text
+
+video_files = [os.path.join(video_folder, f) for f in os.listdir(video_folder) if
+               os.path.splitext(f)[1].lower() in ('.mp4', '.mkv', '.avi', '.mov')]
+
+for video_file in video_files:
+    video_path = Path(video_file)
+    video_folder = video_path.parent
+    video_name = video_path.stem
+
+    print(f"Processing {video_name}")
+    print("Loading the model")
+    model = whisper.load_model(f'{model_type}')
+    print("Transcribing")
+    result, video = transcribe(video_file, save_path, video_name, model_type=model_type, translate=False)
+    sub = convert_to_subtitle(result['segments'])
+    sub_transcribed = save_subtitle(sub, video_folder, video_name + '_en', format=format)
+
+    print(f"Subtitle for {video_name} is saved at {sub_transcribed}\n")
+
+loop = asyncio.get_event_loop()
+loop.run_until_complete(send_telegram_message(TELEGRAM_CHAT_ID, 'Whisper_completed'))
+loop.close()
